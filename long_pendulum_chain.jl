@@ -6,6 +6,10 @@
 # Convert to first-order system for use with DifferentialEquations.jl
 #
 # Requires: DifferentialEquations, Plots
+using Pkg
+Pkg.add("DifferentialEquations")
+Pkg.add("Plots")
+
 
 using DifferentialEquations
 using Plots
