@@ -1,21 +1,4 @@
-<<<<<<< HEAD:infinite_pendulum.jl
 using LinearAlgebra
-=======
-# long_pendulum_chain.jl
-# Simulate a long chain of coupled pendula and animate.
-#
-# Model:
-#   I * θ̈_n = - m g L sin(θ_n) + K (θ_{n+1} - 2 θ_n + θ_{n-1})
-# Convert to first-order system for use with DifferentialEquations.jl
-#
-# Requires: DifferentialEquations, Plots
-using Pkg
-Pkg.add("DifferentialEquations")
-Pkg.add("Plots")
-
-
-using DifferentialEquations
->>>>>>> d3a161496e11eedcbc64a4fc9a9518821a3b177c:long_pendulum_chain.jl
 using Plots
 #To make a pendulum, use make_pendulum(n= number of links, fixed_pivot = true/false).
 #Recomend lower n and true pivot
@@ -213,4 +196,3 @@ function make_pendulum(n; T=T_FINAL, dt=DT, fps=FPS, fixed_pivot=true)
     gif(anim, filename(n), fps = fps)
     println("Saved GIF as: $(filename(n))")
 end
-
