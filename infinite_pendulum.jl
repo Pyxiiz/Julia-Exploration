@@ -1,131 +1,199 @@
-# long_pendulum_chain.jl
-# Simulate a long chain of coupled pendula and animate.
-#
-# Model:
-#   I * θ̈_n = - m g L sin(θ_n) + K (θ_{n+1} - 2 θ_n + θ_{n-1})
-# Convert to first-order system for use with DifferentialEquations.jl
-#
-# Requires: DifferentialEquations, Plots
-
-using DifferentialEquations
+using LinearAlgebra
 using Plots
+#To make a pendulum, use make_pendulum(n= number of links, fixed_pivot = true/false).
+#Recomend lower n and true pivot
+#False pivot allows for the pivot to move around. 
+#After rendering, will save a gif file which you can either save or display in the notebook. 
+# -------------------------
+# User adjustable options
+# -------------------------
+const FPS = 60
+const DT = 0.01
+const T_FINAL = 30.0
 
-# Uncomment and run once if you need to install
-# import Pkg; Pkg.add(["DifferentialEquations","Plots"])
+# pivot behavior (true means fixed at origin)
+const fixed_pivot = true
 
-gr()  # GR backend
+# pivot motion if not fixed
+pivot_motion(t) = (0.5 * sin(0.6 * t), 0.0)
+
+# number of links
+const n = 3
+
+# lengths and masses
+L = ones(n) .* 1.0
+m = ones(n) .* 1.0
+g = 9.81
 
 # -------------------------
-# Physical / numerical params
+# Forward kinematics
 # -------------------------
-const N = 120               # number of pendula (try 120; increase/decrease for performance)
-const L = 1.0               # length (m)
-const m = 1.0               # mass (kg)
-const I = m * L^2           # moment of inertia for point mass at distance L
-const g = 9.81              # gravity m/s^2
-const K = 50.0              # torsional coupling stiffness (N*m/rad)
-const spacing = 1.0         # pure label: physical spacing a can be used to get continuum limits
-const tmax = 12.0           # total simulation time in seconds
+function forward_kinematics(theta, L, px, py)
+    N = length(theta)
+    xs = zeros(N+1)
+    ys = zeros(N+1)
+    xs[1] = px
+    ys[1] = py
 
-# Derived
-const ω0sq = g / L
-const coupling_coef = K / I   # multiplies discrete Laplacian
-
-# -------------------------
-# Initial condition: localized kick
-# -------------------------
-# Example: give a gaussian-shaped initial angle profile
-using Random
-rng = MersenneTwister(1234)
-
-x = range(0, stop=1, length=N)
-x0 = 0.25
-sigma = 0.06
-θ0 = 0.5 .* exp.(.-(x .- x0).^2 ./ (2*sigma^2))      # initial angular displacement (radians)
-# Option: add a little noise if desired
-θ0 .+= 0.0 .* (randn(rng, N) .* 1e-3)
-
-ω0 = zeros(N)   # initial angular velocities
-
-# state vector u = [θ1...θN, ω1...ωN]
-u0 = vcat(θ0, ω0)
-
-# -------------------------
-# Right-hand side
-# -------------------------
-function chain_dynamics!(du, u, p, t)
-    θ = @view u[1:N]
-    ω = @view u[N+1:2N]
-    dθ = @view du[1:N]
-    dω = @view du[N+1:2N]
-
-    # θ_dot = ω
-    @inbounds for i in 1:N
-        dθ[i] = ω[i]
+    for k in 1:N
+        xs[k+1] = xs[k] + L[k] * sin(theta[k])
+        ys[k+1] = ys[k] - L[k] * cos(theta[k])
     end
 
-    # Compute discrete Laplacian with fixed-end boundary conditions:
-    # θ_0 = 0 and θ_{N+1} = 0 (you can pick free-end by copying neighbor values)
-    @inbounds for i in 1:N
-        left  = (i == 1) ? 0.0 : θ[i-1]
-        right = (i == N) ? 0.0 : θ[i+1]
-        lap = right - 2.0*θ[i] + left
-        dω[i] = - ω0sq * sin(θ[i]) + coupling_coef * lap
-    end
-end
-
-# -------------------------
-# Solve
-# -------------------------
-tspan = (0.0, tmax)
-prob = ODEProblem(chain_dynamics!, u0, tspan)
-
-# For oscillatory mechanical systems, Tsit5 or Vern9 works fine.
-# Increase abstol/reltol for accuracy if desired.
-sol = solve(prob, Tsit5(); abstol=1e-8, reltol=1e-8)
-
-# -------------------------
-# Animation: show angles as vertical displacements for clarity
-# -------------------------
-# We'll plot a 2D "string" where horizontal axis is pendulum index and vertical axis is angle or y-pos.
-# To make it visually like pendula, compute bob positions (x_i, y_i) with small amplitude mapping.
-
-# Mapping params for visuals
-x_positions = collect(1:N) .- (N+1)/2        # center horizontally
-scale_angle_to_y = 0.9 * (1.0 / maximum(abs.(θ0) .+ 1e-6))  # scale so initial shape is visible
-# better mapping: convert angle θ -> bob x = pivot_x + L sin θ, y = -L cos θ
-function bob_coords(θ_vector)
-    xs = similar(θ_vector)
-    ys = similar(θ_vector)
-    for i in 1:length(θ_vector)
-        xs[i] = x_positions[i] + L * sin(θ_vector[i]) * 0.6   # horizontal wiggle scaled
-        ys[i] = -L * cos(θ_vector[i])                         # vertical
-    end
     return xs, ys
 end
 
-# Build animation frames
-anim = @animate for (ti, ui) in zip(sol.t, sol.u)
-    θ = ui[1:N]
-    xs, ys = bob_coords(θ)
+# -------------------------
+# Mass matrix
+# -------------------------
+function mass_matrix(theta, L, m)
+    N = length(theta)
+    M = zeros(N, N)
 
-    plt = scatter(xs, ys; markersize=4, ylim=(-L-0.2, 0.2), xlim=(minimum(x_positions)-1, maximum(x_positions)+1),
-        markerstrokecolor = :black, legend=false, aspect_ratio = 0.35,
-        title = @sprintf("Coupled pendula chain, t = %.2f s, N = %d", ti, N),
-        xlabel = "index (spatial)", ylabel = "vertical position (m)")
-
-    # draw strings from pivot line y=0 to bob
-    for i in 1:N
-        plot!([x_positions[i], xs[i]], [0.0, ys[i]]; linewidth=0.8)
+    for k in 1:N
+        for i in 1:k
+            for j in 1:k
+                M[i,j] += m[k] * (
+                    L[i]*cos(theta[i]) * L[j]*cos(theta[j]) +
+                    L[i]*sin(theta[i]) * L[j]*sin(theta[j])
+                )
+            end
+        end
     end
 
-    # draw bobs on top
-    scatter!(xs, ys; markersize=8, markercolor = :blue)
+    return M
+end
 
-    plt
-end fps=20
+# -------------------------
+# Gravity vector
+# -------------------------
+function gravity_vector(theta, L, m, g)
+    N = length(theta)
+    G = zeros(N)
 
-# Save to gif
-outfile = "pendula_chain_N$(N).gif"
-gif(anim, outfile, fps = 20)
-println("Saved animation to: ", outfile)
+    downstream = zeros(N)
+    downstream[N] = m[N]
+    for i in N-1:-1:1
+        downstream[i] = downstream[i+1] + m[i]
+    end
+
+    for i in 1:N
+        G[i] = L[i] * sin(theta[i]) * g * downstream[i]
+    end
+
+    return G
+end
+
+# -------------------------
+# Coriolis vector using numeric Christoffel symbols
+# -------------------------
+function coriolis_vector(theta, thetadot, L, m)
+    N = length(theta)
+    eps = 1e-7
+
+    M0 = mass_matrix(theta, L, m)
+    dM = Array{Float64,3}(undef, N, N, N)
+
+    for k in 1:N
+        thp = copy(theta)
+        thm = copy(theta)
+        thp[k] += eps
+        thm[k] -= eps
+        Mp = mass_matrix(thp, L, m)
+        Mm = mass_matrix(thm, L, m)
+        dM[:,:,k] = (Mp .- Mm) ./ (2eps)
+    end
+
+    C = zeros(N)
+
+    for i in 1:N
+        for j in 1:N
+            for k in 1:N
+                Γ = 0.5 * (dM[i,j,k] + dM[i,k,j] - dM[j,k,i])
+                C[i] += Γ * thetadot[j] * thetadot[k]
+            end
+        end
+    end
+
+    return C
+end
+
+# -------------------------
+# Full dynamics
+# -------------------------
+function acceleration(theta, thetadot, L, m, g)
+    M = mass_matrix(theta, L, m)
+    G = gravity_vector(theta, L, m, g)
+    C = coriolis_vector(theta, thetadot, L, m)
+    return M \ -(G .+ C)
+end
+
+# -------------------------
+# RK4
+# -------------------------
+function rk4_step(theta, thetadot, dt, L, m, g)
+    f = (th, thd) -> acceleration(th, thd, L, m, g)
+
+    k1_thd = thetadot
+    k1_thdd = f(theta, thetadot)
+
+    k2_thd = thetadot .+ 0.5*dt .* k1_thdd
+    k2_thdd = f(theta .+ 0.5*dt .* k1_thd, k2_thd)
+
+    k3_thd = thetadot .+ 0.5*dt .* k2_thdd
+    k3_thdd = f(theta .+ 0.5*dt .* k2_thd, k3_thd)
+
+    k4_thd = thetadot .+ dt .* k3_thdd
+    k4_thdd = f(theta .+ dt .* k3_thd, k4_thd)
+
+    theta_new = theta .+ dt .* (k1_thd .+ 2k2_thd .+ 2k3_thd .+ k4_thd) ./ 6
+    thetadot_new = thetadot .+ dt .* (k1_thdd .+ 2k2_thdd .+ 2k3_thdd .+ k4_thdd) ./ 6
+
+    return theta_new, thetadot_new
+end
+
+# -------------------------
+# Simulation and rendering
+# -------------------------
+function make_pendulum(n; T=T_FINAL, dt=DT, fps=FPS, fixed_pivot=true)
+
+    # local filename helper to avoid global name conflicts
+    filename(n) = "pendulum_$(n).gif"
+
+    L = fill(1.0, n)
+    m = fill(1.0, n)
+
+    theta = zeros(n)
+    for i in 1:n
+        theta[i] = pi/2 + 0.2*(-1)^i*(i/n)
+    end
+
+    thetadot = zeros(n)
+
+    anim = @animate for step in 1:Int(round(T/dt))
+        t = step * dt
+        theta, thetadot = rk4_step(theta, thetadot, dt, L, m, g)
+
+        px, py = fixed_pivot ? (0.0, 0.0) : pivot_motion(t)
+
+        xs, ys = forward_kinematics(theta, L, px, py)
+
+        plt = plot(xs, ys,
+            seriestype = :path,
+            linewidth = 3,
+            xlim = (-sum(L)-0.5, sum(L)+0.5),
+            ylim = (-sum(L)-0.5, sum(L)+0.5),
+            aspect_ratio = 1,
+            legend = false,
+            title = "n link pendulum (n = $n)"
+        )
+
+        scatter!(plt, xs, ys, markersize = 4)
+        scatter!(plt, [px], [py], marker = :star5, markersize = 6)
+        plt
+    end
+
+    gif(anim, filename(n), fps = fps)
+    println("Saved GIF as: $(filename(n))")
+end
+
